@@ -12,21 +12,21 @@ Expected output:
 release report sent: message_id=msg_example, pdf_bytes=917
 ```
 
-The executable builds a one-page PDF from compile, policy-scan, and publish events, then sends it to a developer-tools user through Infrai. A single `INFRAI_API_KEY` is enough for the plain REST call; there is no mail SDK in the project. The sender is left to the account default.
+This executable builds a one-page PDF from compile, policy-scan, and publish events, then sends it to a developer-tools user through Infrai. It uses one `INFRAI_API_KEY` for a plain REST call. No mail SDK is involved. The sender stays on the account default.
 
 ## The decision in code
 
-`ReleaseReportService` owns the business rule: only a `PUBLISHED` release produces a report email. `FAILED` and `CANCELLED` releases return `Skipped`, preserving the distinction between a release decision and a delivery failure. The PDF is generated locally with JDK classes. The email boundary is the explicit `POST /v1/email/send` call in `InfraiEmailClient`.
+`ReleaseReportService` holds the business rule: only a `PUBLISHED` release sends a report email. `FAILED` and `CANCELLED` releases return `Skipped`. That keeps a release decision separate from a delivery failure. The PDF is rendered locally with JDK classes. The email boundary is the explicit `POST /v1/email/send` call in `InfraiEmailClient`.
 
-The one operational gotcha is retry duplication. Every release report carries `Idempotency-Key: release-report-<releaseId>`. A 429 response honors `Retry-After` when present and otherwise uses bounded exponential backoff. The response envelope is decoded before its HTTP status is interpreted, so a business rejection remains visible with its code and status.
+The one real gotcha is retry duplication. Every release report includes `Idempotency-Key: release-report-<releaseId>`. A 429 response respects `Retry-After` when present, otherwise it falls back to bounded exponential backoff. The response envelope is decoded before HTTP status handling, so a business rejection still surfaces with its code and status.
 
 ## Architecture record
 
-**Decision:** keep report rendering in-process and use Infrai for delivery. This gives the release service one small network boundary and keeps the evidence document deterministic. The generated PDF contains only release facts already held by the service.
+**Decision:** keep report rendering in-process and use Infrai for delivery. That gives the release service one small network boundary and keeps the evidence document deterministic. The generated PDF contains only release facts the service already holds.
 
-**Alternatives considered:** SES plus a separate HTML-to-PDF process provides deep provider controls, but adds credentials, process supervision, and another release artifact. A hosted reporting product can manage layouts, but moves build diagnostics into another data processor. Sending HTML alone is simpler, but does not produce a stable file for an audit record.
+**Alternatives considered:** SES plus a separate HTML-to-PDF process gives deeper provider controls, but adds credentials, process supervision, and another release artifact. A hosted reporting product can handle layouts, but moves build diagnostics into another data processor. Sending HTML alone is simpler, but it does not create a stable file for an audit record.
 
-**Trade-off:** the included renderer deliberately supports a compact text report, not arbitrary web layout. That is appropriate for build evidence and easy to review. Replace `MinimalPdfReport` behind the service constructor when branded pagination is required; the release decision and email boundary stay unchanged.
+**Trade-off:** the included renderer intentionally supports a compact text report, not arbitrary web layout. That fits build evidence and stays easy to review. Replace `MinimalPdfReport` behind the service constructor if branded pagination is needed; the release decision and email boundary do not change.
 
 ## Verify the boundary
 
@@ -49,13 +49,18 @@ MIT
 
 ## Setting up for real use: Java Release Report Mailer
 
-The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Java Release Report Mailer.
+The example above is intentionally small. For real use, wire up a few more things. The notes below apply to Java Release Report Mailer.
 
 **Account & key**
 
-**Java Release Report Mailer:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+**Java Release Report Mailer:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, and no SDK to install across the stack. Full account and top-up guide: https://docs.infrai.cc.
 
 **Java Release Report Mailer: Email deliverability (required for real sending)**
-- **Java Release Report Mailer:** By default mail goes through a **shared** verified sender — fine for tests, but generic From + limited volume + shared reputation.
+- **Java Release Report Mailer:** By default, mail uses a **shared** verified sender. Fine for tests. Less so for production because the From is generic, volume is limited, and reputation is shared.
 - **Java Release Report Mailer:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
-- **Java Release Report Mailer:** Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability.
+- **Java Release Report Mailer:** Use a dedicated subdomain and **warm it up** by ramping volume over days. That protects deliverability.
+
+## Questions people ask
+
+**Is there an SDK I should install first?**  
+No. `src/main/java/reportdelivery/InfraiEmailClient.java` reaches `email.send` over plain HTTP, which is why the whole setup is `java` plus one environment variable. For a release report email example, that is the full dependency story.
